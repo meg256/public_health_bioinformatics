@@ -10,7 +10,7 @@ task primer_clip {
     Int cpu = 4
     Int memory = 16
     Int disk_size = 100
-    String docker = "us-docker.pkg.dev/general-theiagen/staphb/ivar:1.3.1-titan"  # needs bwa + samtools >= 1.12; see note
+    String docker = "community.wave.seqera.io/library/bwa_htslib_samtools:83b50ff84ead50d0"
   }
   command <<<
     set -euo pipefail
@@ -18,14 +18,16 @@ task primer_clip {
     echo "BWA $(bwa 2>&1 | grep Version)" | tee BWA_VERSION
     samtools --version | head -n1 | tee SAMTOOLS_VERSION
 
-    # need to check if the ivar:1.3.1-titan image contains samtools 1.12 or newer, which is neded to run the 'both-ends' arg
-    samtools ampliconclip 2>&1 | grep -q -- '--both-ends' \
-        || { echo "ERROR: samtools in this image lacks 'ampliconclip --both-ends'; use samtools >= 1.12" >&2; exit 1; }
+    # fail early if samtools is too old (written to work under pipefail)
+    ampliconclip_help=$(samtools ampliconclip 2>&1 || true)
+    if ! grep -q -- '--both-ends' <<< "$ampliconclip_help"; then
+      echo "ERROR: samtools in this image lacks 'ampliconclip --both-ends'; use samtools >= 1.12" >&2
+      exit 1
+    fi
 
     # primalscheme BEDs use a placeholder chrom name ("reference"); rewrite it to match the reference header.
-    # Only valid for a single-sequence reference (true for H37Rv).
+    # Only valid for a single-sequence reference (true for H37Rv). Skips header/comment lines.
     ref_chrom=$(head -n1 ~{reference_genome} | sed 's/^>//; s/[[:space:]].*//')
-    # awk -v c="$ref_chrom" 'BEGIN{OFS="\t"} {$1=c; print}' ~{primer_bed} > primers.bed
     awk -v c="$ref_chrom" 'BEGIN{OFS="\t"} /^#/ || NF<3 {next} {$1=c; print}' ~{primer_bed} > primers.bed
     echo "primers in BED: $(wc -l < primers.bed)"
 
@@ -38,7 +40,7 @@ task primer_clip {
       | samtools sort -@ ~{cpu} -o aligned.bam -
     samtools index aligned.bam
 
-    # Hard-clip so the primer bases are actually removed from SEQ (soft clips survive samtools fastq).
+    # Hard-clip so primer bases are removed from SEQ (soft clips survive samtools fastq).
     # Unmapped reads pass through unchanged.
     samtools ampliconclip \
       --hard-clip \
