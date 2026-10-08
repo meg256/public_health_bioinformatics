@@ -9,7 +9,7 @@ task version_capture {
     volatile: true
   }
   command <<<
-    VERSION_TAG="v4.2.0-primerclip.1"
+    VERSION_TAG="v4.2.0-primerclip.2"
     echo "PHB ${VERSION_TAG}" > PHB_VERSION
 
     export TZ=~{timezone}
