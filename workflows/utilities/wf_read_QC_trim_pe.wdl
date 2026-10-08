@@ -6,6 +6,7 @@ import "../../tasks/quality_control/basic_statistics/task_readlength.wdl" as rea
 import "../../tasks/quality_control/read_filtering/task_bbduk.wdl" as bbduk_task
 import "../../tasks/quality_control/read_filtering/task_fastp.wdl" as fastp_task
 import "../../tasks/quality_control/read_filtering/task_ncbi_scrub.wdl" as ncbi_scrub
+import "../../tasks/quality_control/read_filtering/task_primer_clip.wdl" as primer_clip_task
 import "../../tasks/quality_control/read_filtering/task_trimmomatic.wdl" as trimmomatic_task
 import "../../tasks/taxon_id/contamination/task_kraken2.wdl" as kraken
 import "../../tasks/taxon_id/contamination/task_midas.wdl" as midas_task
@@ -49,6 +50,9 @@ workflow read_QC_trim_pe {
     String read_qc = "fastq_scan" # options: fastq_scan, fastqc
     String? trimmomatic_override_args
     String fastp_args = "--detect_adapter_for_pe -g -5 20 -3 20"
+
+    File? primer_bed                 # NEW
+    File? primer_clip_reference      # NEW
 
     # rasusa downsampling inputs
     Boolean call_rasusa = false
@@ -184,6 +188,21 @@ workflow read_QC_trim_pe {
       adapters_fasta = adapters,
       phix_fasta = phix
   }
+
+  # NEW: optional coordinate-based primer clipping
+  if (defined(primer_bed) && defined(primer_clip_reference)) {
+    call primer_clip_task.primer_clip {
+      input:
+        read1 = bbduk.read1_clean,
+        read2 = bbduk.read2_clean,
+        samplename = samplename,
+        reference_genome = select_first([primer_clip_reference]),
+        primer_bed = select_first([primer_bed])
+    }
+  }
+  File final_read1 = select_first([primer_clip.read1_clean, bbduk.read1_clean])   # NEW
+  File final_read2 = select_first([primer_clip.read2_clean, bbduk.read2_clean])   # NEW
+
   if ("~{workflow_series}" == "theiaprok" || "~{workflow_series}" == "theiameta") {
     if (call_midas) {
       call midas_task.midas {
@@ -217,22 +236,22 @@ workflow read_QC_trim_pe {
   if ("~{workflow_series}" == "theiameta") {
     call readlength_task.readlength {
       input:
-        read1 = bbduk.read1_clean,
-        read2 = bbduk.read2_clean
+        read1 = final_read1, #bbduk.read1_clean,
+        read2 = final_read2 #bbduk.read2_clean
     }
   }
   if (read_qc == "fastqc") {
     call fastqc_task.fastqc as fastqc_clean {
       input:
-        read1 = bbduk.read1_clean,
-        read2 = bbduk.read2_clean
+        read1 = final_read1, #bbduk.read1_clean,
+        read2 = final_read2 #bbduk.read2_clean
     }
   }
   if (read_qc == "fastq_scan") {
     call fastq_scan.fastq_scan_pe as fastq_scan_clean {
       input:
-        read1 = bbduk.read1_clean,
-        read2 = bbduk.read2_clean
+        read1 = final_read1, #bbduk.read1_clean,
+        read2 = final_read2 #bbduk.read2_clean
     }
   }
   output {
@@ -242,8 +261,8 @@ workflow read_QC_trim_pe {
     Int? ncbi_scrub_human_spots_removed = ncbi_scrub_pe.human_spots_removed
     String? ncbi_scrub_docker = ncbi_scrub_pe.ncbi_scrub_docker
     # bbduk
-    File read1_clean = bbduk.read1_clean
-    File read2_clean = bbduk.read2_clean
+    File read1_clean = final_read1 #bbduk.read1_clean
+    File read2_clean = final_read2 #bbduk.read2_clean
     String bbduk_docker = bbduk.bbduk_docker
     # fastq_scan raw (per read stats)
     Int? fastq_scan_raw1 = fastq_scan_raw.read1_seq
@@ -334,5 +353,8 @@ workflow read_QC_trim_pe {
     File? read2_subsampled_raw = rasusa.read2_subsampled
     File? rasusa_log = rasusa.rasusa_log
     String? rasusa_version = rasusa.rasusa_version
+    #amplicon clip
+    File? ampliconclip_stats = primer_clip.ampliconclip_stats    # NEW
+    String? samtools_version_primer_clip = primer_clip.samtools_version
   }
 }
