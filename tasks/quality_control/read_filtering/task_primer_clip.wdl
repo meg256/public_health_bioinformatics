@@ -45,6 +45,7 @@ task primer_clip {
     samtools ampliconclip \
       --hard-clip \
       --both-ends \
+      --filter-len 30 \
       -b primers.bed \
       -f ~{samplename}.ampliconclip.stats.txt \
       -o clipped.bam \
